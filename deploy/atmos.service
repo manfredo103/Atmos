@@ -1,0 +1,29 @@
+[Unit]
+Description=Atmos web backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atmos
+Group=atmos
+WorkingDirectory=/opt/atmos
+EnvironmentFile=-/opt/atmos/.env
+ExecStart=/opt/atmos/current/atmos
+Restart=always
+RestartSec=3
+
+# Hardening: the app only needs to read its own files and talk to the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

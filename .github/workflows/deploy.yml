@@ -1,0 +1,99 @@
+name: Test and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two deployments at the same time.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'deploy-production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test -count=1 ./...
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      APP_DIR: /opt/atmos
+      APP_PORT: ${{ vars.APP_PORT || '8080' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host atmos-server
+            HostName $SSH_HOST
+            User $SSH_USER
+            Port $SSH_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ConnectTimeout 15
+          EOF
+
+      - name: Detect server CPU architecture
+        id: arch
+        run: |
+          machine="$(ssh atmos-server uname -m)"
+          case "$machine" in
+            x86_64)        echo "goarch=amd64" >> "$GITHUB_OUTPUT" ;;
+            aarch64|arm64) echo "goarch=arm64" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported server architecture: $machine"; exit 1 ;;
+          esac
+          echo "Server architecture: $machine"
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ steps.arch.outputs.goarch }}
+        run: go build -trimpath -ldflags="-s -w" -o atmos .
+
+      - name: Upload release
+        run: |
+          RELEASE="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          echo "RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          ssh atmos-server "mkdir -p '$APP_DIR/releases/$RELEASE'"
+          scp atmos deploy/remote-deploy.sh "atmos-server:$APP_DIR/releases/$RELEASE/"
+
+      - name: Activate release and restart service
+        run: ssh atmos-server "bash '$APP_DIR/releases/$RELEASE/remote-deploy.sh' '$RELEASE' '$APP_PORT'"
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

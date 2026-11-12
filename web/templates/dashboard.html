@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Dashboard - {{.AppName}}</title>
+  {{template "head" .}}
+  <style>
+    .title-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
+
+    .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; }
+    .segmented button {
+      background: transparent; color: var(--muted); border: 0; padding: 0.45rem 0.9rem;
+      font: inherit; font-size: 0.85rem; cursor: pointer;
+    }
+    .segmented button + button { border-left: 1px solid var(--border); }
+    .segmented button:hover { color: var(--text); background: var(--surface-hover); }
+    .segmented button.active { color: var(--bg); background: var(--accent); font-weight: 600; }
+
+    .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+    .metric-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .metric-value { margin: 0.35rem 0; font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .metric-value .u { font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 0.25rem; }
+    .metric-meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .badge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
+    .badge.good { background: rgba(34, 197, 94, 0.15); color: var(--ok); }
+    .badge.moderate { background: rgba(234, 179, 8, 0.15); color: var(--pending); }
+    .badge.poor, .badge.stale { background: rgba(239, 68, 68, 0.15); color: var(--bad); }
+    .metric.inside { border-top: 3px solid var(--accent); }
+    .metric.outside { border-top: 3px solid var(--accent-2); }
+
+    .toolbar { display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .chart-wrap { position: relative; }
+    #chart { width: 100%; height: 340px; display: block; }
+    #chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+    #chart .grid-line { stroke: var(--border); stroke-width: 1; }
+    #chart .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    #chart .area { stroke: none; }
+    #chart .cursor { stroke: var(--muted); stroke-dasharray: 3 3; }
+    .chart-empty {
+      position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 0.9rem;
+    }
+    .tooltip {
+      position: absolute; pointer-events: none; display: none;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem;
+      padding: 0.5rem 0.7rem; font-size: 0.8rem; white-space: nowrap; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .tooltip .tt-time { color: var(--muted); margin-bottom: 0.2rem; }
+    .tooltip .tt-row { display: flex; align-items: center; gap: 0.4rem; }
+    .swatch { width: 0.65rem; height: 0.65rem; border-radius: 2px; display: inline-block; }
+
+    .legend { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 1rem; font-size: 0.85rem; }
+    .legend-item { display: flex; flex-direction: column; gap: 0.15rem; }
+    .legend-name { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+    .legend-stats { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+    .error-banner {
+      display: none; margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 0.5rem;
+      background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 0.9rem;
+    }
+    .grafana-frame { width: 100%; height: 75vh; min-height: 480px; border: 0; border-radius: 0.5rem; background: var(--bg); }
+    .muted-link { color: var(--accent); font-size: 0.85rem; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  {{template "header" .}}
+
+  <main>
+    <div class="title-row">
+      <div>
+        <h1>Climate Dashboard</h1>
+        <p class="lead">Indoor sensor readings and outdoor weather for Erlangen.</p>
+      </div>
+      {{if .GrafanaEmbedURL}}
+      <div class="segmented" role="tablist" aria-label="Data source">
+        <button type="button" class="active" data-source="live">Live (InfluxDB)</button>
+        <button type="button" data-source="grafana">Grafana</button>
+      </div>
+      {{end}}
+    </div>
+
+    <div id="error" class="error-banner" role="alert"></div>
+
+    <section id="view-live">
+      <h2>Current</h2>
+      <div class="metrics">
+        <div class="panel metric inside">
+          <div class="metric-label">Inside temperature</div>
+          <div class="metric-value"><span id="cur-inside-temperature">--</span><span class="u">&deg;C</span></div>
+          <div class="metric-meta" id="meta-inside">Waiting for data</div>
+        </div>
+        <div class="panel metric outside">
+          <div class="metric-label">Outside temperature</div>
+          <div class="metric-value"><span id="cur-outside-temperature">--</span><span class="u">&deg;C</span></div>
+          <div class="metric-meta" id="meta-outside">Waiting for data</div>
+        </div>
+        <div class="panel metric inside">
+          <div class="metric-label">Inside humidity</div>
+          <div class="metric-value"><span id="cur-inside-humidity">--</span><span class="u">%</span></div>
+          <div class="metric-meta"><span>Outside: <span id="cur-outside-humidity">--</span>%</span></div>
+        </div>
+        <div class="panel metric inside">
+          <div class="metric-label">Inside CO2</div>
+          <div class="metric-value"><span id="cur-inside-co2">--</span><span class="u">ppm</span></div>
+          <div class="metric-meta" id="meta-co2">Air quality unknown</div>
+        </div>
+      </div>
+
+      <h2>History</h2>
+      <div class="panel">
+        <div class="toolbar">
+          <div class="segmented" id="field-buttons" aria-label="Metric">
+            <button type="button" data-field="temperature">Temperature</button>
+            <button type="button" data-field="humidity">Humidity</button>
+            <button type="button" data-field="co2">CO2</button>
+          </div>
+          <div class="segmented" id="range-buttons" aria-label="Time range">
+            <button type="button" data-range="1h">1h</button>
+            <button type="button" data-range="6h">6h</button>
+            <button type="button" data-range="24h">24h</button>
+            <button type="button" data-range="7d">7d</button>
+            <button type="button" data-range="30d">30d</button>
+          </div>
+        </div>
+        <div class="chart-wrap" id="chart-wrap">
+          <svg id="chart" role="img" aria-label="History chart"></svg>
+          <div class="chart-empty" id="chart-empty">No data for this time range</div>
+          <div class="tooltip" id="tooltip"></div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    {{if .GrafanaEmbedURL}}
+    <section id="view-grafana" class="hidden">
+      <h2>Grafana</h2>
+      <div class="panel">
+        <iframe class="grafana-frame" src="{{.GrafanaEmbedURL}}" title="Grafana dashboard" loading="lazy"></iframe>
+        {{if .GrafanaURL}}<p><a class="muted-link" href="{{.GrafanaURL}}" target="_blank" rel="noopener noreferrer">Open in Grafana</a></p>{{end}}
+      </div>
+    </section>
+    {{end}}
+  </main>
+
+  {{template "footer" .}}
+
+  <script>
+  (function () {
+    "use strict";
+
+    var FIELDS = {
+      temperature: { label: "Temperature", unit: "\u00B0C", digits: 1 },
+      humidity:    { label: "Humidity",    unit: "%",       digits: 1 },
+      co2:         { label: "CO2",         unit: "ppm",     digits: 0 }
+    };
+    var SERIES_STYLE = {
+      inside:  { name: "Inside",  color: "#38bdf8" },
+      outside: { name: "Outside", color: "#f59e0b" }
+    };
+    var FALLBACK_COLORS = ["#a78bfa", "#34d399", "#f472b6", "#94a3b8"];
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    var REFRESH_MS = 60000;
+
+    var state = {
+      field: localStorage.getItem("atmos.field") || "temperature",
+      range: localStorage.getItem("atmos.range") || "24h",
+      series: {}
+    };
+    if (!FIELDS[state.field]) state.field = "temperature";
+
+    var errorEl = document.getElementById("error");
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = msg ? "block" : "none";
+    }
+
+    function fmt(v, digits) {
+      return (v === undefined || v === null) ? "--" : Number(v).toFixed(digits);
+    }
+    function ago(iso) {
+      var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var h = Math.round(mins / 60);
+      if (h < 48) return h + " h ago";
+      return Math.round(h / 24) + " days ago";
+    }
+    function setText(id, text) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+    function setMeta(id, text, badgeText, badgeClass) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = "";
+      el.appendChild(document.createTextNode(text));
+      if (badgeText) {
+        var b = document.createElement("span");
+        b.className = "badge " + badgeClass;
+        b.textContent = badgeText;
+        el.appendChild(b);
+      }
+    }
+    function seriesStyle(loc, idx) {
+      return SERIES_STYLE[loc] || { name: loc, color: FALLBACK_COLORS[idx % FALLBACK_COLORS.length] };
+    }
+
+    // ---------- Current values ----------
+    function loadCurrent() {
+      return fetch("/api/climate/current", { cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || r.statusText); });
+          return r.json();
+        })
+        .then(function (data) {
+          var loc = data.locations || {};
+          var inside = loc.inside || {}, outside = loc.outside || {};
+
+          setText("cur-inside-temperature", fmt(inside.temperature, 1));
+          setText("cur-outside-temperature", fmt(outside.temperature, 1));
+          setText("cur-inside-humidity", fmt(inside.humidity, 1));
+          setText("cur-outside-humidity", fmt(outside.humidity, 0));
+          setText("cur-inside-co2", fmt(inside.co2, 0));
+
+          if (inside.time) {
+            var staleIn = Date.now() - new Date(inside.time).getTime() > 15 * 60000;
+            setMeta("meta-inside", "Updated " + ago(inside.time) + " ", staleIn ? "Stale" : "", "stale");
+          }
+          if (outside.time) {
+            var staleOut = Date.now() - new Date(outside.time).getTime() > 60 * 60000;
+            setMeta("meta-outside", "Updated " + ago(outside.time) + " ", staleOut ? "Stale" : "", "stale");
+          }
+          if (inside.co2 !== undefined) {
+            var q = inside.co2 < 800 ? ["Good", "good"] : inside.co2 < 1200 ? ["Moderate", "moderate"] : ["Poor - ventilate", "poor"];
+            setMeta("meta-co2", "Air quality ", q[0], q[1]);
+          }
+          showError("");
+        });
+    }
+
+    // ---------- History ----------
+    function loadHistory() {
+      var url = "/api/climate/history?field=" + encodeURIComponent(state.field) + "&range=" + encodeURIComponent(state.range);
+      return fetch(url, { cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || r.statusText); });
+          return r.json();
+        })
+        .then(function (data) {
+          state.series = data.series || {};
+          drawChart();
+        });
+    }
+
+    function niceScale(min, max, count) {
+      if (min === max) { min -= 1; max += 1; }
+      var raw = (max - min) / count;
+      var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      var norm = raw / mag;
+      var step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+      var lo = Math.floor(min / step) * step;
+      var hi = Math.ceil(max / step) * step;
+      var ticks = [];
+      for (var v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+      return { min: lo, max: hi, ticks: ticks, step: step };
+    }
+
+    function el(name, attrs, parent) {
+      var n = document.createElementNS(SVG_NS, name);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(n);
+      return n;
+    }
+
+    var svg = document.getElementById("chart");
+    var tooltip = document.getElementById("tooltip");
+    var chartGeom = null;
+
+    function drawChart() {
+      var cfg = FIELDS[state.field];
+      var W = svg.clientWidth || 800, H = svg.clientHeight || 340;
+      var pad = { l: 48, r: 16, t: 12, b: 28 };
+      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+      var keys = Object.keys(state.series).sort(function (a, b) {
+        var order = { inside: 0, outside: 1 };
+        return (order[a] !== undefined ? order[a] : 9) - (order[b] !== undefined ? order[b] : 9);
+      });
+      var parsed = keys.map(function (k, i) {
+        return {
+          key: k,
+          style: seriesStyle(k, i),
+          pts: state.series[k].map(function (p) { return { t: new Date(p.t).getTime(), v: p.v }; })
+        };
+      }).filter(function (s) { return s.pts.length > 0; });
+
+      var empty = document.getElementById("chart-empty");
+      renderLegend(parsed, cfg);
+      if (parsed.length === 0) {
+        empty.style.display = "flex";
+        chartGeom = null;
+        return;
+      }
+      empty.style.display = "none";
+
+      var tMin = Infinity, tMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+      parsed.forEach(function (s) {
+        s.pts.forEach(function (p) {
+          if (p.t < tMin) tMin = p.t;
+          if (p.t > tMax) tMax = p.t;
+          if (p.v < vMin) vMin = p.v;
+          if (p.v > vMax) vMax = p.v;
+        });
+      });
+      if (tMin === tMax) { tMin -= 60000; tMax += 60000; }
+      var y = niceScale(vMin, vMax, 5);
+      var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+      function sx(t) { return pad.l + (t - tMin) / (tMax - tMin) * iw; }
+      function sy(v) { return pad.t + ih - (v - y.min) / (y.max - y.min) * ih; }
+
+      // Y grid + labels
+      y.ticks.forEach(function (v) {
+        el("line", { x1: pad.l, x2: W - pad.r, y1: sy(v), y2: sy(v), "class": "grid-line" }, svg);
+        var label = el("text", { x: pad.l - 8, y: sy(v) + 4, "text-anchor": "end" }, svg);
+        label.textContent = y.step < 1 ? v.toFixed(1) : String(v);
+      });
+
+      // X labels
+      var longRange = (tMax - tMin) > 36 * 3600000;
+      var xTicks = Math.max(2, Math.min(7, Math.floor(iw / 110)));
+      for (var i = 0; i <= xTicks; i++) {
+        var t = tMin + (tMax - tMin) * i / xTicks;
+        var d = new Date(t);
+        var txt = longRange
+          ? d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })
+          : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+        var anchor = i === 0 ? "start" : i === xTicks ? "end" : "middle";
+        el("text", { x: sx(t), y: H - 8, "text-anchor": anchor }, svg).textContent = txt;
+      }
+
+      // Series
+      parsed.forEach(function (s) {
+        var dLine = "", dArea = "";
+        s.pts.forEach(function (p, idx) {
+          var cmd = (idx === 0 ? "M" : "L") + sx(p.t).toFixed(1) + "," + sy(p.v).toFixed(1);
+          dLine += cmd;
+        });
+        dArea = dLine + "L" + sx(s.pts[s.pts.length - 1].t).toFixed(1) + "," + (pad.t + ih) +
+                "L" + sx(s.pts[0].t).toFixed(1) + "," + (pad.t + ih) + "Z";
+        el("path", { d: dArea, "class": "area", fill: s.style.color, "fill-opacity": "0.08" }, svg);
+        el("path", { d: dLine, "class": "series", stroke: s.style.color }, svg);
+      });
+
+      // Hover elements
+      var cursor = el("line", { "class": "cursor", y1: pad.t, y2: pad.t + ih, visibility: "hidden" }, svg);
+      var dots = parsed.map(function (s) {
+        return el("circle", { r: 4, fill: s.style.color, stroke: "#0f172a", "stroke-width": 2, visibility: "hidden" }, svg);
+      });
+
+      chartGeom = { parsed: parsed, sx: sx, sy: sy, tMin: tMin, tMax: tMax, pad: pad, iw: iw, W: W, cursor: cursor, dots: dots, cfg: cfg, longRange: longRange };
+    }
+
+    function nearest(pts, t) {
+      var lo = 0, hi = pts.length - 1;
+      while (hi - lo > 1) {
+        var mid = (lo + hi) >> 1;
+        if (pts[mid].t < t) lo = mid; else hi = mid;
+      }
+      return Math.abs(pts[lo].t - t) <= Math.abs(pts[hi].t - t) ? pts[lo] : pts[hi];
+    }
+
+    function onMove(evt) {
+      if (!chartGeom) return;
+      var g = chartGeom;
+      var rect = svg.getBoundingClientRect();
+      var x = (evt.clientX - rect.left) * (g.W / rect.width);
+      if (x < g.pad.l || x > g.pad.l + g.iw) { onLeave(); return; }
+      var t = g.tMin + (x - g.pad.l) / g.iw * (g.tMax - g.tMin);
+
+      tooltip.textContent = "";
+      var timeRow = document.createElement("div");
+      timeRow.className = "tt-time";
+      var snapT = null;
+
+      g.parsed.forEach(function (s, i) {
+        var p = nearest(s.pts, t);
+        if (snapT === null) snapT = p.t;
+        g.dots[i].setAttribute("cx", g.sx(p.t));
+        g.dots[i].setAttribute("cy", g.sy(p.v));
+        g.dots[i].setAttribute("visibility", "visible");
+
+        var row = document.createElement("div");
+        row.className = "tt-row";
+        var sw = document.createElement("span");
+        sw.className = "swatch";
+        sw.style.background = s.style.color;
+        row.appendChild(sw);
+        row.appendChild(document.createTextNode(s.style.name + ": " + fmt(p.v, g.cfg.digits) + " " + g.cfg.unit));
+        tooltip.appendChild(row);
+      });
+
+      var cx = g.sx(snapT);
+      g.cursor.setAttribute("x1", cx);
+      g.cursor.setAttribute("x2", cx);
+      g.cursor.setAttribute("visibility", "visible");
+
+      timeRow.textContent = new Date(snapT).toLocaleString("de-DE", {
+        weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+      });
+      tooltip.insertBefore(timeRow, tooltip.firstChild);
+
+      tooltip.style.display = "block";
+      var px = cx * (rect.width / g.W);
+      var tw = tooltip.offsetWidth;
+      var left = px + 12;
+      if (left + tw > rect.width) left = px - tw - 12;
+      tooltip.style.left = Math.max(0, left) + "px";
+      tooltip.style.top = "8px";
+    }
+
+    function onLeave() {
+      tooltip.style.display = "none";
+      if (!chartGeom) return;
+      chartGeom.cursor.setAttribute("visibility", "hidden");
+      chartGeom.dots.forEach(function (d) { d.setAttribute("visibility", "hidden"); });
+    }
+
+    svg.addEventListener("mousemove", onMove);
+    svg.addEventListener("mouseleave", onLeave);
+    svg.addEventListener("touchmove", function (e) { if (e.touches[0]) onMove(e.touches[0]); }, { passive: true });
+    svg.addEventListener("touchend", onLeave);
+
+    function renderLegend(parsed, cfg) {
+      var legend = document.getElementById("legend");
+      legend.textContent = "";
+      parsed.forEach(function (s) {
+        var vals = s.pts.map(function (p) { return p.v; });
+        var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+        var avg = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+
+        var item = document.createElement("div");
+        item.className = "legend-item";
+        var name = document.createElement("div");
+        name.className = "legend-name";
+        var sw = document.createElement("span");
+        sw.className = "swatch";
+        sw.style.background = s.style.color;
+        name.appendChild(sw);
+        name.appendChild(document.createTextNode(s.style.name));
+        var stats = document.createElement("div");
+        stats.className = "legend-stats";
+        stats.textContent = "min " + fmt(min, cfg.digits) + "  /  avg " + fmt(avg, cfg.digits) +
+                            "  /  max " + fmt(max, cfg.digits) + " " + cfg.unit;
+        item.appendChild(name);
+        item.appendChild(stats);
+        legend.appendChild(item);
+      });
+    }
+
+    // ---------- Controls ----------
+    function syncButtons() {
+      document.querySelectorAll("#field-buttons button").forEach(function (b) {
+        b.classList.toggle("active", b.dataset.field === state.field);
+      });
+      document.querySelectorAll("#range-buttons button").forEach(function (b) {
+        b.classList.toggle("active", b.dataset.range === state.range);
+      });
+    }
+    document.getElementById("field-buttons").addEventListener("click", function (e) {
+      var f = e.target.dataset && e.target.dataset.field;
+      if (!f) return;
+      state.field = f;
+      localStorage.setItem("atmos.field", f);
+      syncButtons();
+      loadHistory().catch(handleError);
+    });
+    document.getElementById("range-buttons").addEventListener("click", function (e) {
+      var r = e.target.dataset && e.target.dataset.range;
+      if (!r) return;
+      state.range = r;
+      localStorage.setItem("atmos.range", r);
+      syncButtons();
+      loadHistory().catch(handleError);
+    });
+
+    // Optional Grafana tab
+    document.querySelectorAll("[data-source]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var src = btn.dataset.source;
+        document.querySelectorAll("[data-source]").forEach(function (b) { b.classList.toggle("active", b === btn); });
+        document.getElementById("view-live").classList.toggle("hidden", src !== "live");
+        var gv = document.getElementById("view-grafana");
+        if (gv) gv.classList.toggle("hidden", src !== "grafana");
+        if (src === "live") drawChart();
+      });
+    });
+
+    var resizeTimer;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawChart, 150);
+    });
+
+    function handleError(err) {
+      showError("Could not load data: " + err.message);
+    }
+    function refresh() {
+      loadCurrent().catch(handleError);
+      loadHistory().catch(handleError);
+    }
+
+    syncButtons();
+    refresh();
+    setInterval(function () {
+      if (!document.hidden) refresh();
+    }, REFRESH_MS);
+  })();
+  </script>
+</body>
+</html>

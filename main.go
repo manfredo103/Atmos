@@ -37,16 +37,6 @@ func getEnvOrDefault(primary, fallback string) string {
 	return os.Getenv(fallback)
 }
 
-// helloHandler handles requests to "/" and displays "Hello, World!".
-func helloHandler(w http.ResponseWriter, r *http.Request) {
-	// If the request path is not exact "/", return 404
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	fmt.Fprintln(w, "Hello, World!")
-}
-
 // greetHandler demonstrates how to use query parameters and your greetings package.
 // Visit: http://localhost:8080/greet?name=Manfred
 func greetHandler(w http.ResponseWriter, r *http.Request) {
@@ -152,11 +142,17 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Register URL patterns to their respective handler functions
+	mux.HandleFunc("/", landingHandler)
+	// Optionally serve a built frontend (e.g. the SetPoint volleyball app) under /volleyball/.
+	// The Vite build must then use `base: '/volleyball/'`.
 	if staticDir := os.Getenv("STATIC_DIR"); staticDir != "" {
-		mux.Handle("/", http.FileServer(http.Dir(staticDir)))
-	} else {
-		mux.HandleFunc("/", helloHandler)
+		mux.Handle("/volleyball/", http.StripPrefix("/volleyball/", http.FileServer(http.Dir(staticDir))))
 	}
+	mux.HandleFunc("/dashboard", dashboardHandler)
+	mux.HandleFunc("/api/health", healthHandler(client))
+	climateAPI := NewClimateAPI(client, org, bucket)
+	mux.HandleFunc("/api/climate/current", climateAPI.handleCurrent)
+	mux.HandleFunc("/api/climate/history", climateAPI.handleHistory)
 	mux.HandleFunc("/greet", greetHandler)
 	mux.HandleFunc("/api/sensors", sensorHandler)
 	mux.HandleFunc("/api/volleyball/matches", vbAPI.handleMatches)

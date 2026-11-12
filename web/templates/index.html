@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>{{.AppName}}</title>
+  {{template "head" .}}
+  <style>
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    }
+    .card:hover, .card:focus-visible {
+      background: var(--surface-hover);
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      outline: none;
+    }
+    .card-tag {
+      align-self: flex-start;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+    .card-title { font-size: 1.15rem; font-weight: 600; }
+    .card-desc { color: var(--muted); font-size: 0.9rem; flex: 1; }
+    .card-link { font-size: 0.85rem; color: var(--accent); }
+    .card.placeholder { border-style: dashed; background: transparent; cursor: default; }
+    .card.placeholder:hover { transform: none; border-color: var(--border); }
+  </style>
+</head>
+<body>
+  {{template "header" .}}
+
+  <main>
+    <section>
+      <h1>Welcome to {{.AppName}}</h1>
+      <p class="lead">A small collection of self-hosted apps and dashboards. Pick an app below to get started.</p>
+    </section>
+
+    {{if .Apps}}
+    <h2>Apps</h2>
+    <div class="grid">
+      {{range .Apps}}
+      <a class="card" href="{{.URL}}"{{if .External}} target="_blank" rel="noopener noreferrer"{{end}}>
+        <span class="card-tag">{{.Tag}}</span>
+        <span class="card-title">{{.Title}}</span>
+        <span class="card-desc">{{.Description}}</span>
+        <span class="card-link">Open {{.Title}}</span>
+      </a>
+      {{end}}
+      <div class="card placeholder">
+        <span class="card-tag">Coming soon</span>
+        <span class="card-title">More apps</span>
+        <span class="card-desc">New projects will show up here.</span>
+      </div>
+    </div>
+    {{end}}
+
+    {{if .Tools}}
+    <h2>Tools</h2>
+    <div class="grid">
+      {{range .Tools}}
+      <a class="card" href="{{.URL}}"{{if .External}} target="_blank" rel="noopener noreferrer"{{end}}>
+        <span class="card-tag">{{.Tag}}</span>
+        <span class="card-title">{{.Title}}</span>
+        <span class="card-desc">{{.Description}}</span>
+        <span class="card-link">Open {{.Title}}</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+  </main>
+
+  {{template "footer" .}}
+</body>
+</html>
