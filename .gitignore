@@ -1,0 +1,33 @@
+# Environment & Secrets (NEVER push to remote)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Go Binaries & Build Output
+/Atmos
+/main
+/server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Frontend & Build Caches (Vite, Node, Dist)
+node_modules/
+dist/
+.vite/
+*.local
+
+# Editor & OS Files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
